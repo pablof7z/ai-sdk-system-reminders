@@ -1,161 +1,112 @@
 # ai-sdk-system-reminders
 
-Stateful system reminders for AI SDK apps.
+Dynamic prompt injection for multi-step AI agents built on the Vercel AI SDK.
 
-Use it when your app needs to:
+## The Problem
 
-- recompute live reminders like `todo-list` or `delegations` on every request
-- queue one-shot reminders for the current cycle or the next cycle
-- inject those reminders at request time without mutating stored conversation history
+Multi-step AI agents need dynamic context injected into their prompts — todo lists that change after tool calls, routing instructions that depend on who's being addressed, delegation status that updates asynchronously. This context must be recomputed between steps, but the AI SDK's middleware layer doesn't know about your application's data model.
 
-`ai-sdk-system-reminders` has two jobs:
+Without structure, you end up imperatively pushing prompt fragments from scattered call sites, with no single place to instrument, debug, or reason about what the model sees.
 
-- a runtime that registers reminder producers and queues one-shot reminders
-- AI SDK middleware that appends a collected reminder snapshot to the latest user message
+## How It Works
 
-## Why It Exists
+Register **providers** — functions that compute prompt fragments from your application state. The middleware calls them lazily at each model invocation, so you set data once and reminders stay current across steps.
 
-Most apps eventually need both of these patterns:
+```typescript
+import { createSystemReminderContext, createSystemRemindersMiddleware } from "ai-sdk-system-reminders";
+import { generateText, wrapLanguageModel } from "ai";
 
-- computed reminders from live state
-  - example: current todo list, routing target, active delegations
-- queued reminders from runtime events
-  - example: a heuristic warning after a bad tool sequence, or a correction to show on the next cycle
+// 1. Create a typed context
+const ctx = createSystemReminderContext<{ userName: string; todos: string[] }>();
 
-This package gives you one reminder model for both.
+// 2. Register providers — they run on every model call
+ctx.registerProvider("greeting", (data) =>
+  data ? { type: "greeting", content: `You are talking to ${data.userName}.` } : null
+);
 
-## Core Concepts
-
-- `type`
-  - a free-form semantic identifier like `todo-list`, `delegations`, `heuristic`, or `agents-md`
-- computed reminder producers
-  - registered once and re-evaluated whenever you collect reminders
-- queued reminders
-  - one-shot reminder instances stored in memory until they are delivered
-- reminder snapshots
-  - plain `{ type, content, attributes? }` objects passed through `providerOptions`
-
-The middleware only handles the last step: it appends reminder snapshots to the prompt. It does not own reminder state.
-
-## What You Can Do With It
-
-- recompute reminders like `todo-list`, `response-routing`, or `delegations` every time you build a request
-- queue one-shot reminders like `heuristic` or `supervision-message` without mutating stored conversation history
-- target queued reminders by scope, such as agent, conversation, workspace, or tenant
-- inject reminder snapshots at the last moment through AI SDK middleware
-- parse, combine, and re-emit `<system-reminder>` blocks when reminders also flow through tool results or other text channels
-
-## Quick Start
-
-```ts
-import {
-  createSystemReminderRuntime,
-  createSystemRemindersMiddleware,
-  createSystemRemindersProviderOptions,
-} from "ai-sdk-system-reminders";
-
-const reminders = createSystemReminderRuntime<
-  { agentId: string; conversationId: string },
-  { currentTodos: string; hasDelegations: boolean }
->();
-
-reminders.register({
-  id: "todo-list",
-  resolve: ({ context }) =>
-    context.currentTodos
-      ? { type: "todo-list", content: context.currentTodos }
-      : null,
+ctx.registerProvider("todos", (data) => {
+  if (!data?.todos.length) return null;
+  return { type: "todos", content: `Current todos:\n${data.todos.map(t => `- ${t}`).join("\n")}` };
 });
 
-reminders.register({
-  id: "delegations",
-  resolve: ({ context }) =>
-    context.hasDelegations
-      ? {
-          type: "delegations",
-          content:
-            "You have active delegations. Use delegate_followup instead of replying directly.",
-        }
-      : null,
+// 3. Wire up the middleware
+const model = wrapLanguageModel({
+  model: yourBaseModel,
+  middleware: [createSystemRemindersMiddleware(ctx)],
 });
 
-reminders.queue({
-  type: "heuristic",
-  content: "You used several tools without updating the todo list.",
-  scope: { agentId: "agent-1", conversationId: "conv-1" },
-  cycleId: "run-17",
-  delivery: "current-cycle",
-});
+// 4. Push data — providers will pick it up at the next model call
+ctx.setProviderData({ userName: "Alice", todos: ["Set up CI", "Write tests"] });
 
-const snapshot = await reminders.collect({
-  scope: { agentId: "agent-1", conversationId: "conv-1" },
-  context: {
-    currentTodos: "## Current Todos\n- [ ] Fix failing test",
-    hasDelegations: true,
-  },
-  cycleId: "run-17",
-});
-
-const providerOptions = createSystemRemindersProviderOptions({
-  reminders: snapshot,
-});
-
-const middleware = createSystemRemindersMiddleware({});
+const result = await generateText({ model, prompt: "What should I work on next?" });
 ```
 
-## Learn By Example
+The middleware collects provider output and injects it as XML-tagged `<system-reminder>` blocks into the last user message. The model sees them as authoritative system instructions embedded in the conversation.
 
-The top-level README stays intentionally high level. The practical guide lives in [`examples/README.md`](./examples/README.md).
+## Three Delivery Modes
 
-Recommended reading order:
-1. `examples/01-computed-reminders.ts`
-2. `examples/02-current-cycle-reminders.ts`
-3. `examples/03-next-cycle-reminders.ts`
-4. `examples/04-middleware-injection.ts`
-5. `examples/05-xml-utilities.ts`
+| Mode | Method | Lifetime | Use Case |
+|------|--------|----------|----------|
+| **Provider** | `registerProvider()` | Runs every `collect()` | State that must stay current: todos, routing, delegations |
+| **Queue** | `queue()` | Consumed once | One-shot nudges: heuristic violations, tool corrections |
+| **Defer** | `defer()` + `advance()` | Held until next cycle | Cross-cycle delivery: delegation results arriving between agent runs |
 
-## Delivery Modes
+## API
 
-- `current-cycle`
-  - delivered once when the collected `cycleId` matches the enqueue `cycleId`
-- `next-cycle`
-  - delivered once after the collected `cycleId` changes
+### `createSystemReminderContext<T>(options?): SystemReminderContext<T>`
 
-That is useful for patterns like:
+Creates a typed context. The generic `T` defines the shape of data passed to providers.
 
-- intervene on the current execution after a heuristic violation
-- schedule a reminder for the next agent run without persisting it in conversation history
+**Options:**
 
-## Main Exports
+| Option | Type | Description |
+|--------|------|-------------|
+| `onCollect` | `(reminders: Descriptor[]) => void` | Called after every `collect()` with the final list. Wire to telemetry. |
+| `onProviderError` | `(type: string, error: unknown) => void` | Called when a provider throws. The provider is skipped; others still run. |
 
-- `createSystemReminderRuntime(...)`
-- `createSystemRemindersMiddleware(...)`
-- `systemReminders(...)`
-- `createSystemRemindersProviderOptions(...)`
-- `applySystemRemindersToPrompt(...)`
-- `wrapInSystemReminder(...)`
-- `combineSystemReminders(...)`
-- `appendSystemReminderToMessage(...)`
-- `extractSystemReminder(...)`
-- `extractAllSystemReminders(...)`
+**Methods:**
 
-## Run The Examples
+| Method | Description |
+|--------|-------------|
+| `registerProvider(type, fn)` | Register a provider function. Replaces any existing provider with the same type. |
+| `removeProvider(type)` | Remove a provider. Returns `true` if it existed. |
+| `setProviderData(data)` | Set the data blob passed to all providers on next `collect()`. |
+| `queue(descriptor)` | One-shot reminder. Returned by the next `collect()`, then drained. |
+| `defer(descriptor)` | Held back until `advance()` promotes it into the queue. |
+| `advance()` | Promote all deferred items into the queue. Call between agent runs/cycles. |
+| `collect()` | **Async.** Runs all providers, appends queued items, drains the queue, fires `onCollect`. |
+| `clear()` | Resets data + queued + deferred. Providers are **not** removed (they're structural). |
 
-From the package root:
+### `createSystemRemindersMiddleware(ctx): LanguageModelV3Middleware`
+
+AI SDK v3 middleware. Calls `await ctx.collect()` in `transformParams` and injects reminders into the prompt.
+
+### XML Utilities
+
+```typescript
+wrapInSystemReminder(descriptor)           // → XML string
+combineSystemReminders(descriptors[])      // → joined XML string
+extractSystemReminder(content, type?)      // → descriptor | null
+extractAllSystemReminders(content, type?)  // → descriptor[]
+hasSystemReminder(content)                 // → boolean
+```
+
+### `applySystemReminders(prompt, reminders): LanguageModelV3Message[]`
+
+Manually apply reminders to a prompt array without using the middleware.
+
+## Examples
+
+Run against a local Ollama instance:
 
 ```bash
-bun run example:01
-bun run example:02
-bun run example:03
-bun run example:04
-bun run example:05
+bun run example:01  # Provider-based reminders
+bun run example:02  # Tool side effects with queue()
+bun run example:03  # Heuristic nudges via queue()
+bun run example:04  # Deferred reminders across agent runs
 ```
 
-## Relationship To `AGENTS.md`
-
-`AGENTS.md` is not built into this package.
-
-If your app wants filesystem-driven reminders, a separate producer can emit reminder blocks such as `<system-reminder type="agents-md">...</system-reminder>`. In TENEX, that producer lives in `ai-sdk-fs-tools`.
+Set `OLLAMA_MODEL` to choose a specific model, or let it auto-detect.
 
 ## License
 

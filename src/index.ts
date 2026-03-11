@@ -1,42 +1,17 @@
-export { createSystemReminderRuntime } from "./runtime.js";
+export { createSystemReminderContext } from "./context.js";
+export { createSystemRemindersMiddleware } from "./middleware.js";
+export { applySystemReminders } from "./prompt.js";
 export {
-  createSystemRemindersMiddleware,
-  systemReminders,
-} from "./middleware.js";
-export {
-  createSystemRemindersProviderOptions,
-  getSystemRemindersRequest,
-  stripSystemRemindersProviderOptions,
-} from "./provider-options.js";
-export { applySystemRemindersToPrompt } from "./prompt.js";
-export {
-  extractAllSystemReminders,
-  extractSystemReminder,
   wrapInSystemReminder,
   combineSystemReminders,
-  appendSystemReminderToMessage,
+  extractSystemReminder,
+  extractAllSystemReminders,
   hasSystemReminder,
-  extractSystemReminderContent,
-  extractAllSystemReminderContents,
-  normalizeSystemReminderContents,
-} from "./utils.js";
+} from "./xml.js";
 
 export type {
-  CreateSystemRemindersProviderOptionsInput,
-  CollectSystemRemindersInput,
-  QueueSystemReminderInput,
-  QueuedSystemReminder,
   SystemReminderDescriptor,
-  SystemReminderDelivery,
-  SystemReminderProducer,
-  SystemReminderProducerContext,
-  SystemReminderProducerResult,
-  SystemReminderQueueFilter,
-  SystemReminderRuntime,
-  SystemRemindersMiddleware,
-  SystemRemindersMiddlewareConfig,
-  SystemRemindersRequest,
-  SystemReminderPrompt,
+  SystemReminderContext,
+  SystemReminderProvider,
+  SystemReminderContextOptions,
 } from "./types.js";
-
-export { DEFAULT_SYSTEM_REMINDERS_PROVIDER_KEY } from "./types.js";

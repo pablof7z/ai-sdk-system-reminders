@@ -1,121 +1,172 @@
-import { describe, expect, test } from "bun:test";
-import type { LanguageModelV3Message } from "@ai-sdk/provider";
-import {
-  createSystemRemindersMiddleware,
-  createSystemRemindersProviderOptions,
-} from "../index.js";
+import { describe, expect, it } from "bun:test";
+import type {
+  LanguageModelV3CallOptions,
+  LanguageModelV3Message,
+} from "@ai-sdk/provider";
+import { createSystemReminderContext } from "../context.js";
+import { createSystemRemindersMiddleware } from "../middleware.js";
+import { hasSystemReminder } from "../xml.js";
+
+function makeParams(
+  prompt: LanguageModelV3Message[]
+): LanguageModelV3CallOptions {
+  return {
+    prompt,
+    mode: { type: "regular" },
+    inputFormat: "messages",
+  } as LanguageModelV3CallOptions;
+}
+
+function getTextFromMessage(message: LanguageModelV3Message): string {
+  if (message.role === "system") return message.content;
+  for (const part of message.content) {
+    if (part.type === "text") return part.text;
+  }
+  return "";
+}
 
 describe("createSystemRemindersMiddleware", () => {
-  test("appends snapshot reminders to the latest user message in order", async () => {
-    const middleware = createSystemRemindersMiddleware({});
-    const prompt: LanguageModelV3Message[] = [
-      { role: "system", content: "SYSTEM" },
-      { role: "user", content: [{ type: "text", text: "Hello" }] },
-    ];
+  it("passes params through unchanged when context is empty", async () => {
+    const ctx = createSystemReminderContext();
+    const middleware = createSystemRemindersMiddleware(ctx);
 
-    const result = await middleware.transformParams?.({
-      params: {
-        prompt,
-        providerOptions: createSystemRemindersProviderOptions({
-          reminders: [
-            { type: "todo-list", content: "Keep the todo list current." },
-            { type: "delegations", content: "Use delegate_followup for active delegations." },
-          ],
-        }),
-      } as any,
-      type: "generate-text" as any,
-      model: { provider: "test", modelId: "model" } as any,
+    const params = makeParams([
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+    ]);
+
+    const result = await middleware.transformParams!({
+      params,
+      type: "generate",
     });
-
-    const userMessage = result?.prompt[1] as LanguageModelV3Message;
-    const textPart = userMessage.content[0];
-
-    expect(textPart.type).toBe("text");
-    expect(textPart.text).toContain("Hello");
-    expect(textPart.text).toContain('<system-reminder type="todo-list">');
-    expect(textPart.text).toContain("Keep the todo list current.");
-    expect(textPart.text).toContain('<system-reminder type="delegations">');
-    expect(textPart.text).toContain("Use delegate_followup");
-    expect(textPart.text.indexOf('type="todo-list"')).toBeLessThan(
-      textPart.text.indexOf('type="delegations"')
-    );
-    expect(result?.providerOptions).toBeUndefined();
+    expect(result).toBe(params); // same reference, no copy
   });
 
-  test("supports multimodal user messages", async () => {
-    const middleware = createSystemRemindersMiddleware({});
-    const prompt: LanguageModelV3Message[] = [
+  it("injects provider reminder into last user message", async () => {
+    const ctx = createSystemReminderContext();
+    ctx.registerProvider("rules", () => ({ type: "rules", content: "be concise" }));
+    const middleware = createSystemRemindersMiddleware(ctx);
+
+    const params = makeParams([
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+    ]);
+
+    const result = await middleware.transformParams!({
+      params,
+      type: "generate",
+    });
+    const lastMsg = result.prompt[result.prompt.length - 1];
+    const text = getTextFromMessage(lastMsg);
+    expect(text).toContain("hello");
+    expect(hasSystemReminder(text)).toBe(true);
+    expect(text).toContain("be concise");
+  });
+
+  it("appends user message when last message is a tool message", async () => {
+    const ctx = createSystemReminderContext();
+    ctx.registerProvider("rules", () => ({ type: "rules", content: "be concise" }));
+    const middleware = createSystemRemindersMiddleware(ctx);
+
+    const params = makeParams([
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I'll help" }],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call_1",
+            toolName: "search",
+            output: { type: "text", value: "search results here" },
+          },
+        ],
+      },
+    ]);
+
+    const result = await middleware.transformParams!({
+      params,
+      type: "generate",
+    });
+    // Tool messages can't hold text parts — a new user message is appended
+    const lastMsg = result.prompt[result.prompt.length - 1];
+    expect(lastMsg.role).toBe("user");
+    const text = getTextFromMessage(lastMsg);
+    expect(hasSystemReminder(text)).toBe(true);
+  });
+
+  it("drains queued reminders — second call doesn't include them", async () => {
+    const ctx = createSystemReminderContext();
+    ctx.queue({ type: "nudge", content: "check todos" });
+    const middleware = createSystemRemindersMiddleware(ctx);
+
+    const params = makeParams([
+      { role: "user", content: [{ type: "text", text: "hello" }] },
+    ]);
+
+    const result1 = await middleware.transformParams!({
+      params,
+      type: "generate",
+    });
+    const text1 = getTextFromMessage(
+      result1.prompt[result1.prompt.length - 1]
+    );
+    expect(text1).toContain("check todos");
+
+    const result2 = await middleware.transformParams!({
+      params,
+      type: "generate",
+    });
+    expect(result2).toBe(params); // empty context, same ref
+  });
+
+  it("supports multimodal user messages (text + file parts)", async () => {
+    const ctx = createSystemReminderContext();
+    ctx.registerProvider("rules", () => ({ type: "rules", content: "be concise" }));
+    const middleware = createSystemRemindersMiddleware(ctx);
+
+    const params = makeParams([
       {
         role: "user",
         content: [
-          { type: "text", text: "Describe this" },
-          { type: "file", data: "https://example.com/cat.png", mediaType: "image/png" },
+          {
+            type: "file",
+            data: new Uint8Array([1, 2, 3]),
+            filename: "test.png",
+            mediaType: "image/png",
+          },
+          { type: "text", text: "describe this" },
         ],
       },
-    ];
+    ]);
 
-    const result = await middleware.transformParams?.({
-      params: {
-        prompt,
-        providerOptions: createSystemRemindersProviderOptions({
-          reminders: [{ type: "image-review", content: "Review the image carefully." }],
-        }),
-      } as any,
-      type: "generate-text" as any,
-      model: { provider: "test", modelId: "model" } as any,
+    const result = await middleware.transformParams!({
+      params,
+      type: "generate",
     });
-
-    const textPart = (result?.prompt[0] as LanguageModelV3Message).content[0];
-    expect(textPart.type).toBe("text");
-    expect(textPart.text).toContain("Describe this");
-    expect(textPart.text).toContain('<system-reminder type="image-review">');
-    expect(textPart.text).toContain("Review the image carefully.");
+    const lastMsg = result.prompt[result.prompt.length - 1];
+    expect(lastMsg.role).toBe("user");
+    const text = getTextFromMessage(lastMsg);
+    // Should not find text in file part, but in the text part
+    expect(text).toContain("describe this");
+    expect(hasSystemReminder(text)).toBe(true);
   });
 
-  test("adds a fallback user message when no user message exists", async () => {
-    const middleware = createSystemRemindersMiddleware({});
-    const result = await middleware.transformParams?.({
-      params: {
-        prompt: [{ role: "system", content: "SYSTEM" }],
-        providerOptions: createSystemRemindersProviderOptions({
-          reminders: [{ type: "fallback", content: "Fallback reminder" }],
-        }),
-      } as any,
-      type: "generate-text" as any,
-      model: { provider: "test", modelId: "model" } as any,
-    });
+  it("adds fallback user message when prompt is empty", async () => {
+    const ctx = createSystemReminderContext();
+    ctx.registerProvider("rules", () => ({ type: "rules", content: "be concise" }));
+    const middleware = createSystemRemindersMiddleware(ctx);
 
-    expect(result?.prompt).toHaveLength(2);
-    const fallbackUser = result?.prompt[1] as LanguageModelV3Message;
-    expect(fallbackUser.role).toBe("user");
-    expect(fallbackUser.content[0]).toEqual({
-      type: "text",
-      text: '<system-reminder type="fallback">\nFallback reminder\n</system-reminder>',
-    });
-  });
+    const params = makeParams([]);
 
-  test("strips only the system reminders provider option namespace", async () => {
-    const middleware = createSystemRemindersMiddleware({});
-    const result = await middleware.transformParams?.({
-      params: {
-        prompt: [{ role: "user", content: [{ type: "text", text: "Question" }] }],
-        providerOptions: {
-          ...createSystemRemindersProviderOptions({
-            reminders: [{ type: "legacy", content: "Legacy content" }],
-          }),
-          openrouter: { usage: { include: true } },
-        },
-      } as any,
-      type: "generate-text" as any,
-      model: { provider: "test", modelId: "model" } as any,
+    const result = await middleware.transformParams!({
+      params,
+      type: "generate",
     });
-
-    const textPart = (result?.prompt[0] as LanguageModelV3Message).content[0];
-    expect(textPart.type).toBe("text");
-    expect(textPart.text).toContain('<system-reminder type="legacy">');
-    expect(textPart.text).toContain("Legacy content");
-    expect(result?.providerOptions).toEqual({
-      openrouter: { usage: { include: true } },
-    });
+    expect(result.prompt.length).toBe(1);
+    expect(result.prompt[0].role).toBe("user");
+    const text = getTextFromMessage(result.prompt[0]);
+    expect(hasSystemReminder(text)).toBe(true);
   });
 });
