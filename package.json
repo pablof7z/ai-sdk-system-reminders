@@ -1,7 +1,7 @@
 {
   "name": "ai-sdk-system-reminders",
-  "version": "0.1.0",
-  "description": "AI SDK middleware for injecting per-request reminders into model calls without rebuilding your base prompt",
+  "version": "0.2.0",
+  "description": "Stateful system reminders runtime and AI SDK middleware for per-request typed prompt injections",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

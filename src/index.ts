@@ -1,4 +1,4 @@
-export { createSystemReminderRegistry } from "./registry.js";
+export { createSystemReminderRuntime } from "./runtime.js";
 export {
   createSystemRemindersMiddleware,
   systemReminders,
@@ -10,6 +10,8 @@ export {
 } from "./provider-options.js";
 export { applySystemRemindersToPrompt } from "./prompt.js";
 export {
+  extractAllSystemReminders,
+  extractSystemReminder,
   wrapInSystemReminder,
   combineSystemReminders,
   appendSystemReminderToMessage,
@@ -20,14 +22,17 @@ export {
 } from "./utils.js";
 
 export type {
-  CreateSystemReminderRegistryOptions,
   CreateSystemRemindersProviderOptionsInput,
-  ResolveSystemReminderOptions,
-  SystemReminderContext,
-  SystemReminderRegistryEntries,
-  SystemReminderRegistry,
-  SystemReminderResolver,
-  SystemReminderValue,
+  CollectSystemRemindersInput,
+  QueueSystemReminderInput,
+  QueuedSystemReminder,
+  SystemReminderDescriptor,
+  SystemReminderDelivery,
+  SystemReminderProducer,
+  SystemReminderProducerContext,
+  SystemReminderProducerResult,
+  SystemReminderQueueFilter,
+  SystemReminderRuntime,
   SystemRemindersMiddleware,
   SystemRemindersMiddlewareConfig,
   SystemRemindersRequest,

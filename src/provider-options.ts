@@ -2,9 +2,47 @@ import type { JSONObject } from "@ai-sdk/provider";
 import {
   DEFAULT_SYSTEM_REMINDERS_PROVIDER_KEY,
   type CreateSystemRemindersProviderOptionsInput,
+  type SystemReminderDescriptor,
   type SystemRemindersRequest,
   type SystemRemindersProviderOptions,
 } from "./types.js";
+
+function normalizeReminders(value: unknown): SystemReminderDescriptor[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(
+      (entry): entry is SystemReminderDescriptor =>
+        Boolean(entry) &&
+        typeof entry === "object" &&
+        typeof (entry as { type?: unknown }).type === "string" &&
+        typeof (entry as { content?: unknown }).content === "string"
+    )
+    .map((entry) => {
+      const type = entry.type.trim();
+      const content = entry.content.trim();
+      const attributes =
+        entry.attributes && typeof entry.attributes === "object"
+          ? Object.fromEntries(
+              Object.entries(entry.attributes).filter(
+                ([key, value]) =>
+                  key.trim() !== "" &&
+                  typeof value === "string" &&
+                  value.trim() !== ""
+              )
+            )
+          : undefined;
+
+      return {
+        type,
+        content,
+        ...(attributes && Object.keys(attributes).length > 0 ? { attributes } : {}),
+      };
+    })
+    .filter((entry) => entry.type !== "" && entry.content !== "");
+}
 
 export function createSystemRemindersProviderOptions(
   input: CreateSystemRemindersProviderOptionsInput
@@ -12,13 +50,21 @@ export function createSystemRemindersProviderOptions(
   const providerOptionKey =
     input.providerOptionKey ?? DEFAULT_SYSTEM_REMINDERS_PROVIDER_KEY;
 
-  if (input.tags.length === 0) {
+  const reminders = normalizeReminders(input.reminders);
+
+  if (reminders.length === 0) {
     return {};
   }
 
   const request: JSONObject = {
-    tags: input.tags,
-    ...(input.metadata ? { metadata: input.metadata } : {}),
+    reminders: reminders.map(
+      (reminder) =>
+        ({
+          type: reminder.type,
+          content: reminder.content,
+          ...(reminder.attributes ? { attributes: reminder.attributes } : {}),
+        }) as JSONObject
+    ),
   };
 
   return {
@@ -36,20 +82,15 @@ export function getSystemRemindersRequest(
     return undefined;
   }
 
-  const tags = Array.isArray(candidate.tags)
-    ? candidate.tags.filter((tag): tag is string => typeof tag === "string")
-    : [];
+  const reminders = normalizeReminders(
+    (candidate as { reminders?: unknown }).reminders
+  );
 
-  if (tags.length === 0) {
+  if (reminders.length === 0) {
     return undefined;
   }
 
-  const metadata =
-    "metadata" in candidate && candidate.metadata && typeof candidate.metadata === "object"
-      ? (candidate.metadata as JSONObject)
-      : undefined;
-
-  return { tags, metadata };
+  return { reminders };
 }
 
 export function stripSystemRemindersProviderOptions(

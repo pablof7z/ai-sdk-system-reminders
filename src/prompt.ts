@@ -1,8 +1,6 @@
 import type { LanguageModelV3Message } from "@ai-sdk/provider";
-import {
-  combineSystemReminders,
-  normalizeSystemReminderContents,
-} from "./utils.js";
+import type { SystemReminderDescriptor } from "./types.js";
+import { combineSystemReminders } from "./utils.js";
 
 function clonePrompt(prompt: LanguageModelV3Message[]): LanguageModelV3Message[] {
   return prompt.map((message) => {
@@ -31,15 +29,11 @@ function clonePrompt(prompt: LanguageModelV3Message[]): LanguageModelV3Message[]
   });
 }
 
-/**
- * Apply reminder bodies to the latest user message in an AI SDK provider prompt.
- */
 export function applySystemRemindersToPrompt(
   prompt: LanguageModelV3Message[],
-  reminderContents: string[]
+  reminders: SystemReminderDescriptor[]
 ): LanguageModelV3Message[] {
-  const normalizedContents = normalizeSystemReminderContents(reminderContents);
-  const combinedReminder = combineSystemReminders(normalizedContents);
+  const combinedReminder = combineSystemReminders(reminders);
 
   if (combinedReminder === "") {
     return prompt;
@@ -66,6 +60,7 @@ export function applySystemRemindersToPrompt(
       if (part.type !== "text") {
         continue;
       }
+
       message.content[lastTextIndex] = {
         ...part,
         text: `${part.text}\n\n${combinedReminder}`,

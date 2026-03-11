@@ -1,116 +1,238 @@
-/**
- * Wrap content in `<system-reminder>` tags.
- */
-export function wrapInSystemReminder(content: string): string {
-  if (!content || content.trim() === "") {
+import type { SystemReminderDescriptor } from "./types.js";
+
+const SYSTEM_REMINDER_REGEX = /<system-reminder(?:\s+([^>]*))?>\n?([\s\S]*?)\n?<\/system-reminder>/g;
+const FIRST_SYSTEM_REMINDER_REGEX = /<system-reminder(?:\s+([^>]*))?>\n?([\s\S]*?)\n?<\/system-reminder>/;
+const ATTRIBUTE_REGEX = /([A-Za-z_][\w:.-]*)=(?:"([^"]*)"|'([^']*)')/g;
+
+interface SystemReminderSegment {
+  type?: string;
+  content: string;
+  attributes?: Record<string, string>;
+}
+
+function escapeAttributeValue(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function unescapeAttributeValue(value: string): string {
+  return value
+    .replaceAll("&quot;", '"')
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+}
+
+function parseAttributes(attributesText: string | undefined): Record<string, string> | undefined {
+  if (!attributesText) {
+    return undefined;
+  }
+
+  const attributes: Record<string, string> = {};
+  let match: RegExpExecArray | null;
+  ATTRIBUTE_REGEX.lastIndex = 0;
+
+  while ((match = ATTRIBUTE_REGEX.exec(attributesText)) !== null) {
+    const [, key, doubleQuoted, singleQuoted] = match;
+    const value = doubleQuoted ?? singleQuoted ?? "";
+    attributes[key] = unescapeAttributeValue(value);
+  }
+
+  return Object.keys(attributes).length > 0 ? attributes : undefined;
+}
+
+function formatAttributes(attributes: Record<string, string> | undefined): string {
+  if (!attributes) {
     return "";
   }
 
-  return `<system-reminder>\n${content.trim()}\n</system-reminder>`;
-}
+  const entries = Object.entries(attributes).filter(
+    ([key, value]) => key.trim() !== "" && value.trim() !== ""
+  );
 
-/**
- * Combine multiple reminder bodies into one `<system-reminder>` block.
- */
-export function combineSystemReminders(contents: string[]): string {
-  const nonEmpty = contents
-    .map((content) => content.trim())
-    .filter((content) => content.length > 0);
-
-  if (nonEmpty.length === 0) {
+  if (entries.length === 0) {
     return "";
   }
 
-  return wrapInSystemReminder(nonEmpty.join("\n\n"));
+  return ` ${entries
+    .map(([key, value]) => `${key}="${escapeAttributeValue(value)}"`)
+    .join(" ")}`;
 }
 
-/**
- * Append a system reminder block to an existing string message.
- */
-export function appendSystemReminderToMessage(
-  existingContent: string,
-  reminderContent: string
-): string {
-  if (!reminderContent || reminderContent.trim() === "") {
-    return existingContent;
+function normalizeDescriptor(
+  reminder: SystemReminderDescriptor
+): SystemReminderDescriptor | null {
+  const type = reminder.type.trim();
+  const content = reminder.content.trim();
+
+  if (!type || !content) {
+    return null;
   }
 
-  const wrappedReminder = reminderContent.trim().startsWith("<system-reminder>")
-    ? reminderContent.trim()
-    : wrapInSystemReminder(reminderContent);
+  const attributes = reminder.attributes
+    ? Object.fromEntries(
+        Object.entries(reminder.attributes).filter(
+          ([key, value]) => key.trim() !== "" && value.trim() !== ""
+        )
+      )
+    : undefined;
 
-  return `${existingContent}\n\n${wrappedReminder}`;
+  return {
+    type,
+    content,
+    ...(attributes && Object.keys(attributes).length > 0 ? { attributes } : {}),
+  };
 }
 
-/**
- * Check whether content contains a `<system-reminder>` block.
- */
-export function hasSystemReminder(content: string): boolean {
-  return content.includes("<system-reminder>") && content.includes("</system-reminder>");
-}
-
-/**
- * Extract the inner content of the first `<system-reminder>` block.
- */
-export function extractSystemReminderContent(content: string): string {
-  const match = content.match(/<system-reminder>\n?([\s\S]*?)\n?<\/system-reminder>/);
-  return match ? match[1].trim() : "";
-}
-
-/**
- * Extract the inner content of all `<system-reminder>` blocks, preserving
- * surrounding text as standalone entries.
- */
-export function extractAllSystemReminderContents(content: string): string[] {
-  const results: string[] = [];
-  const regex = /<system-reminder>\n?([\s\S]*?)\n?<\/system-reminder>/g;
+function splitSystemReminderSegments(content: string): SystemReminderSegment[] {
+  const results: SystemReminderSegment[] = [];
   let match: RegExpExecArray | null;
   let lastIndex = 0;
 
-  while ((match = regex.exec(content)) !== null) {
+  SYSTEM_REMINDER_REGEX.lastIndex = 0;
+
+  while ((match = SYSTEM_REMINDER_REGEX.exec(content)) !== null) {
     const beforeText = content.substring(lastIndex, match.index).trim();
     if (beforeText) {
-      results.push(beforeText);
+      results.push({ content: beforeText });
     }
 
-    const innerContent = match[1].trim();
-    if (innerContent) {
-      results.push(innerContent);
+    const attributes = parseAttributes(match[1]);
+    const body = match[2]?.trim() ?? "";
+
+    if (body) {
+      results.push({
+        type: attributes?.type,
+        content: body,
+        attributes,
+      });
     }
 
-    lastIndex = regex.lastIndex;
+    lastIndex = SYSTEM_REMINDER_REGEX.lastIndex;
   }
 
   const afterText = content.substring(lastIndex).trim();
   if (afterText) {
-    results.push(afterText);
+    results.push({ content: afterText });
   }
 
   return results;
 }
 
-/**
- * Normalize reminder content before combining it into one block.
- */
-export function normalizeSystemReminderContents(contents: string[]): string[] {
-  const normalized: string[] = [];
+export function wrapInSystemReminder(reminder: SystemReminderDescriptor): string {
+  const descriptor = normalizeDescriptor(reminder);
 
-  for (const content of contents) {
-    const trimmed = content.trim();
-    if (!trimmed) {
-      continue;
-    }
-
-    if (trimmed.startsWith("<system-reminder>")) {
-      const extracted = extractAllSystemReminderContents(trimmed);
-      if (extracted.length > 0) {
-        normalized.push(...extracted);
-        continue;
-      }
-    }
-
-    normalized.push(trimmed);
+  if (!descriptor) {
+    return "";
   }
 
-  return normalized;
+  const attributes = formatAttributes({
+    ...(descriptor.attributes ?? {}),
+    type: descriptor.type,
+  });
+
+  return `<system-reminder${attributes}>\n${descriptor.content}\n</system-reminder>`;
+}
+
+export function extractSystemReminder(
+  content: string,
+  fallbackType?: string
+): SystemReminderDescriptor | null {
+  const match = content.match(FIRST_SYSTEM_REMINDER_REGEX);
+  if (!match) {
+    return null;
+  }
+
+  const attributes = parseAttributes(match[1]);
+  const body = match[2]?.trim() ?? "";
+  const resolvedType = attributes?.type ?? fallbackType;
+
+  if (!body || !resolvedType) {
+    return null;
+  }
+
+  return {
+    type: resolvedType,
+    content: body,
+    ...(attributes ? { attributes } : {}),
+  };
+}
+
+export function extractAllSystemReminders(
+  content: string,
+  fallbackType?: string
+): SystemReminderDescriptor[] {
+  return splitSystemReminderSegments(content)
+    .filter(
+      (segment): segment is SystemReminderSegment & { type?: string } =>
+        segment.content.trim().length > 0
+    )
+    .flatMap((segment) => {
+      const resolvedType = segment.type ?? fallbackType;
+      if (!resolvedType) {
+        return [];
+      }
+
+      return [
+        {
+          type: resolvedType,
+          content: segment.content,
+          ...(segment.attributes ? { attributes: segment.attributes } : {}),
+        },
+      ];
+    });
+}
+
+export function combineSystemReminders(
+  reminders: SystemReminderDescriptor[]
+): string {
+  const combined = reminders
+    .map((reminder) => normalizeDescriptor(reminder))
+    .filter((reminder): reminder is SystemReminderDescriptor => reminder !== null)
+    .map((reminder) => wrapInSystemReminder(reminder))
+    .filter((reminder) => reminder.length > 0)
+    .join("\n\n");
+
+  return combined;
+}
+
+export function appendSystemReminderToMessage(
+  existingContent: string,
+  reminder: SystemReminderDescriptor | SystemReminderDescriptor[]
+): string {
+  const wrappedReminder = combineSystemReminders(
+    Array.isArray(reminder) ? reminder : [reminder]
+  );
+
+  if (!wrappedReminder) {
+    return existingContent;
+  }
+
+  return existingContent ? `${existingContent}\n\n${wrappedReminder}` : wrappedReminder;
+}
+
+export function hasSystemReminder(content: string): boolean {
+  return FIRST_SYSTEM_REMINDER_REGEX.test(content);
+}
+
+export function extractSystemReminderContent(content: string): string {
+  const match = content.match(FIRST_SYSTEM_REMINDER_REGEX);
+  return match ? match[2].trim() : "";
+}
+
+export function extractAllSystemReminderContents(content: string): string[] {
+  return splitSystemReminderSegments(content)
+    .map((segment) => segment.content.trim())
+    .filter((segment) => segment.length > 0);
+}
+
+export function normalizeSystemReminderContents(
+  reminders: SystemReminderDescriptor[]
+): SystemReminderDescriptor[] {
+  return reminders
+    .map((reminder) => normalizeDescriptor(reminder))
+    .filter((reminder): reminder is SystemReminderDescriptor => reminder !== null);
 }
