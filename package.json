@@ -20,6 +20,12 @@
     "build": "tsc",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "example:01": "bun examples/01-computed-reminders.ts",
+    "example:02": "bun examples/02-current-cycle-reminders.ts",
+    "example:03": "bun examples/03-next-cycle-reminders.ts",
+    "example:04": "bun examples/04-middleware-injection.ts",
+    "example:05": "bun examples/05-xml-utilities.ts",
+    "example:all": "bun run example:01 && bun run example:02 && bun run example:03 && bun run example:04 && bun run example:05",
     "prepublishOnly": "bun run build"
   },
   "keywords": [

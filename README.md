@@ -37,6 +37,14 @@ This package gives you one reminder model for both.
 
 The middleware only handles the last step: it appends reminder snapshots to the prompt. It does not own reminder state.
 
+## What You Can Do With It
+
+- recompute reminders like `todo-list`, `response-routing`, or `delegations` every time you build a request
+- queue one-shot reminders like `heuristic` or `supervision-message` without mutating stored conversation history
+- target queued reminders by scope, such as agent, conversation, workspace, or tenant
+- inject reminder snapshots at the last moment through AI SDK middleware
+- parse, combine, and re-emit `<system-reminder>` blocks when reminders also flow through tool results or other text channels
+
 ## Quick Start
 
 ```ts
@@ -95,6 +103,17 @@ const providerOptions = createSystemRemindersProviderOptions({
 const middleware = createSystemRemindersMiddleware({});
 ```
 
+## Learn By Example
+
+The top-level README stays intentionally high level. The practical guide lives in [`examples/README.md`](./examples/README.md).
+
+Recommended reading order:
+1. `examples/01-computed-reminders.ts`
+2. `examples/02-current-cycle-reminders.ts`
+3. `examples/03-next-cycle-reminders.ts`
+4. `examples/04-middleware-injection.ts`
+5. `examples/05-xml-utilities.ts`
+
 ## Delivery Modes
 
 - `current-cycle`
@@ -119,6 +138,18 @@ That is useful for patterns like:
 - `appendSystemReminderToMessage(...)`
 - `extractSystemReminder(...)`
 - `extractAllSystemReminders(...)`
+
+## Run The Examples
+
+From the package root:
+
+```bash
+bun run example:01
+bun run example:02
+bun run example:03
+bun run example:04
+bun run example:05
+```
 
 ## Relationship To `AGENTS.md`
 
