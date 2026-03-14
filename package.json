@@ -1,6 +1,6 @@
 {
   "name": "ai-sdk-system-reminders",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Dynamic prompt injection for multi-step AI agents built on the Vercel AI SDK",
   "type": "module",
   "main": "./dist/index.js",
