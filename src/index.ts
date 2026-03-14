@@ -1,5 +1,6 @@
 export { createSystemReminderContext } from "./context.js";
 export { createSystemRemindersMiddleware } from "./middleware.js";
+export { createSystemReminderSink } from "./sink.js";
 export { applySystemReminders } from "./prompt.js";
 export {
   wrapInSystemReminder,
@@ -14,4 +15,6 @@ export type {
   SystemReminderContext,
   SystemReminderProvider,
   SystemReminderContextOptions,
+  SystemReminderEmission,
+  SystemReminderSink,
 } from "./types.js";

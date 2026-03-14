@@ -4,6 +4,17 @@ export interface SystemReminderDescriptor {
   attributes?: Record<string, string>;
 }
 
+export interface SystemReminderEmission {
+  kind: string;
+  content: string;
+  attributes?: Record<string, string>;
+  disposition?: "queue" | "defer";
+}
+
+export interface SystemReminderSink {
+  emit(reminder: SystemReminderEmission, requestContext?: unknown): Promise<void> | void;
+}
+
 export type SystemReminderProvider<T> = (
   data: T | undefined
 ) =>

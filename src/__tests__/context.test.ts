@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { createSystemReminderContext } from "../context.js";
+import { createSystemReminderSink } from "../sink.js";
 
 describe("SystemReminderContext", () => {
   describe("registerProvider / collect", () => {
@@ -196,6 +197,37 @@ describe("SystemReminderContext", () => {
       // Provider still works when data is set again
       ctx.setProviderData({ v: 99 });
       expect(await ctx.collect()).toEqual([{ type: "check", content: "99" }]);
+    });
+  });
+
+  describe("createSystemReminderSink", () => {
+    it("queues immediate reminder emissions", async () => {
+      const ctx = createSystemReminderContext();
+      const sink = createSystemReminderSink(ctx);
+
+      sink.emit({
+        kind: "rules",
+        content: "be concise",
+      });
+
+      expect(await ctx.collect()).toEqual([{ type: "rules", content: "be concise" }]);
+    });
+
+    it("defers reminder emissions marked for the next run", async () => {
+      const ctx = createSystemReminderContext();
+      const sink = createSystemReminderSink(ctx);
+
+      sink.emit({
+        kind: "follow-up",
+        content: "check the delegation result next turn",
+        disposition: "defer",
+      });
+
+      expect(await ctx.collect()).toEqual([]);
+      ctx.advance();
+      expect(await ctx.collect()).toEqual([
+        { type: "follow-up", content: "check the delegation result next turn" },
+      ]);
     });
   });
 });
